@@ -78,7 +78,7 @@ run_comparison() {
   local bin_rc="$3"
   local bin_cr="$4"
   local bin_cc="$5"
-  local bin_openblas="$6"
+  local bin_openblas="${6:-}"
 
   if [[ -x "$bin_schur" ]]; then
     echo "[msckf] running schur: dense Schur normal equations + Cholesky..."
@@ -143,9 +143,9 @@ run_comparison() {
 }
 
 if [[ "$MODE" == "workspace" ]]; then
-  run_comparison "$WORKSPACE_BINARY_RR" "$WORKSPACE_BINARY_RC" "$WORKSPACE_BINARY_CR" "$WORKSPACE_BINARY_CC" "$WORKSPACE_BINARY_OPENBLAS"
+  run_comparison "$WORKSPACE_BINARY_SCHUR" "$WORKSPACE_BINARY_RR" "$WORKSPACE_BINARY_RC" "$WORKSPACE_BINARY_CR" "$WORKSPACE_BINARY_CC" "$WORKSPACE_BINARY_OPENBLAS"
 elif [[ "$MODE" == "image_multi" ]]; then
-  run_comparison "$IMAGE_BINARY_RR" "$IMAGE_BINARY_RC" "$IMAGE_BINARY_CR" "$IMAGE_BINARY_CC" "$IMAGE_BINARY_OPENBLAS"
+  run_comparison "$IMAGE_BINARY_SCHUR" "$IMAGE_BINARY_RR" "$IMAGE_BINARY_RC" "$IMAGE_BINARY_CR" "$IMAGE_BINARY_CC" "$IMAGE_BINARY_OPENBLAS"
 else
   CMD="$IMAGE_BINARY $DATASET_PATH"
   echo "[msckf] command: $CMD"
