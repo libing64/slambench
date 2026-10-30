@@ -172,7 +172,7 @@ run_one_dataset() {
   gtsam_bal_log="${gtsam_base}_bal.log"
   gtsam_smart_log="${gtsam_base}_smartfactor.log"
 
-  local msckf_base msckf_schur_log msckf_rr_log msckf_rc_log msckf_cr_log msckf_cc_log
+  local msckf_base msckf_schur_log msckf_rr_log msckf_rc_log msckf_cr_log msckf_cc_log msckf_openblas_log
   msckf_base="${msckf_log%.log}"
   if [[ "$msckf_base" == "$msckf_log" ]]; then
     msckf_base="$msckf_log"
@@ -182,6 +182,7 @@ run_one_dataset() {
   msckf_rc_log="${msckf_base}_rc.log"
   msckf_cr_log="${msckf_base}_cr.log"
   msckf_cc_log="${msckf_base}_cc.log"
+  msckf_openblas_log="${msckf_base}_openblas.log"
 
   print_section "Run SymForce [$dataset]"
   bash "$ROOT_DIR/run_symforce.sh" "$dataset" "$sym_log"
@@ -200,12 +201,13 @@ run_one_dataset() {
 
   local sym_t ceres_t ceres_sparse_t gtsam_bal_t gtsam_smart_t
   local sym_iters ceres_iters ceres_sparse_iters gtsam_bal_iters gtsam_smart_iters
-  local msckf_schur_t msckf_rr_t msckf_rc_t msckf_cr_t msckf_cc_t
-  local msckf_schur_iters msckf_rr_iters msckf_rc_iters msckf_cr_iters msckf_cc_iters
+  local msckf_schur_t msckf_rr_t msckf_rc_t msckf_cr_t msckf_cc_t msckf_openblas_t
+  local msckf_schur_iters msckf_rr_iters msckf_rc_iters msckf_cr_iters msckf_cc_iters msckf_openblas_iters
   local sym_ci sym_cf ceres_ci ceres_cf ceres_sparse_ci ceres_sparse_cf
   local gtsam_bal_ci gtsam_bal_cf gtsam_smart_ci gtsam_smart_cf
   local msckf_schur_ci msckf_schur_cf
   local msckf_rr_ci msckf_rr_cf msckf_rc_ci msckf_rc_cf msckf_cr_ci msckf_cr_cf msckf_cc_ci msckf_cc_cf
+  local msckf_openblas_ci msckf_openblas_cf
 
   sym_t=$(parse_symforce_total "$sym_log")
   ceres_t=$(parse_ceres_total "$ceres_log")
@@ -257,6 +259,17 @@ run_one_dataset() {
   msckf_cr_cf=$(parse_msckf_final_cost "$msckf_cr_log")
   msckf_cc_ci=$(parse_msckf_initial_cost "$msckf_cc_log")
   msckf_cc_cf=$(parse_msckf_final_cost "$msckf_cc_log")
+  if [[ -f "$msckf_openblas_log" ]]; then
+    msckf_openblas_t=$(parse_msckf_total "$msckf_openblas_log")
+    msckf_openblas_iters=$(parse_msckf_iters "$msckf_openblas_log")
+    msckf_openblas_ci=$(parse_msckf_initial_cost "$msckf_openblas_log")
+    msckf_openblas_cf=$(parse_msckf_final_cost "$msckf_openblas_log")
+  else
+    msckf_openblas_t=""
+    msckf_openblas_iters=""
+    msckf_openblas_ci=""
+    msckf_openblas_cf=""
+  fi
 
   if [[ -z "$sym_t" || -z "$ceres_t" || -z "$ceres_sparse_t" || -z "$gtsam_bal_t" || -z "$gtsam_smart_t" || -z "$msckf_rr_t" || -z "$msckf_rc_t" || -z "$msckf_cr_t" || -z "$msckf_cc_t" || -z "$sym_iters" || -z "$ceres_iters" || -z "$ceres_sparse_iters" || -z "$gtsam_bal_iters" || -z "$gtsam_smart_iters" || -z "$msckf_rr_iters" || -z "$msckf_rc_iters" || -z "$msckf_cr_iters" || -z "$msckf_cc_iters" || "$sym_iters" -eq 0 || "$ceres_iters" -eq 0 || "$ceres_sparse_iters" -eq 0 || "$gtsam_bal_iters" -eq 0 || "$gtsam_smart_iters" -eq 0 || "$msckf_rr_iters" -eq 0 || "$msckf_rc_iters" -eq 0 || "$msckf_cr_iters" -eq 0 || "$msckf_cc_iters" -eq 0 ]]; then
     echo "[bench] failed to parse totals/iters for dataset '$dataset'"
@@ -279,6 +292,7 @@ msckf_rr_total = float("$msckf_rr_t")
 msckf_rc_total = float("$msckf_rc_t")
 msckf_cr_total = float("$msckf_cr_t")
 msckf_cc_total = float("$msckf_cc_t")
+msckf_openblas_total_str = "$msckf_openblas_t"
 sym_iters = int("$sym_iters")
 ceres_iters = int("$ceres_iters")
 ceres_sparse_iters = int("$ceres_sparse_iters")
@@ -289,6 +303,7 @@ msckf_rr_iters = int("$msckf_rr_iters")
 msckf_rc_iters = int("$msckf_rc_iters")
 msckf_cr_iters = int("$msckf_cr_iters")
 msckf_cc_iters = int("$msckf_cc_iters")
+msckf_openblas_iters_str = "$msckf_openblas_iters"
 sym_ci_str = "$sym_ci"
 sym_cf_str = "$sym_cf"
 ceres_ci_str = "$ceres_ci"
@@ -309,6 +324,8 @@ msckf_cr_ci_str = "$msckf_cr_ci"
 msckf_cr_cf_str = "$msckf_cr_cf"
 msckf_cc_ci_str = "$msckf_cc_ci"
 msckf_cc_cf_str = "$msckf_cc_cf"
+msckf_openblas_ci_str = "$msckf_openblas_ci"
+msckf_openblas_cf_str = "$msckf_openblas_cf"
 
 dataset_name = os.environ.get("DATASET_NAME", "?")
 arch = os.environ.get("ARCH", "?")
@@ -347,6 +364,10 @@ results.extend([
     ("msckf_cr", msckf_cr_total, msckf_cr_iters, msckf_cr_ci_str, msckf_cr_cf_str),
     ("msckf_cc", msckf_cc_total, msckf_cc_iters, msckf_cc_ci_str, msckf_cc_cf_str),
 ])
+if msckf_openblas_total_str and msckf_openblas_iters_str:
+    results.append(("msckf_openblas", float(msckf_openblas_total_str), int(msckf_openblas_iters_str), msckf_openblas_ci_str, msckf_openblas_cf_str))
+else:
+    results.append(("msckf_openblas", None, None, "", ""))
 base_per_iter = ceres_total / ceres_iters if ceres_iters > 0 else None
 rows = []
 for name, total, iters, cost_i_str, cost_f_str in results:

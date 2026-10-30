@@ -10,12 +10,14 @@ WORKSPACE_BINARY_RR="$BUILD_DIR/msckf_runner_rr"
 WORKSPACE_BINARY_RC="$BUILD_DIR/msckf_runner_rc"
 WORKSPACE_BINARY_CR="$BUILD_DIR/msckf_runner_cr"
 WORKSPACE_BINARY_CC="$BUILD_DIR/msckf_runner_cc"
+WORKSPACE_BINARY_OPENBLAS="$BUILD_DIR/msckf_runner_openblas"
 IMAGE_BINARY="/opt/slambench/msckf_c/build/msckf_runner"
 IMAGE_BINARY_SCHUR="/opt/slambench/msckf_c/build/msckf_runner_schur"
 IMAGE_BINARY_RR="/opt/slambench/msckf_c/build/msckf_runner_rr"
 IMAGE_BINARY_RC="/opt/slambench/msckf_c/build/msckf_runner_rc"
 IMAGE_BINARY_CR="/opt/slambench/msckf_c/build/msckf_runner_cr"
 IMAGE_BINARY_CC="/opt/slambench/msckf_c/build/msckf_runner_cc"
+IMAGE_BINARY_OPENBLAS="/opt/slambench/msckf_c/build/msckf_runner_openblas"
 LOG_FILE="${2:-$ROOT_DIR/msckf.log}"
 LOG_BASE="${LOG_FILE%.log}"
 if [[ "$LOG_BASE" == "$LOG_FILE" ]]; then
@@ -26,6 +28,7 @@ LOG_RR="${LOG_BASE}_rr.log"
 LOG_RC="${LOG_BASE}_rc.log"
 LOG_CR="${LOG_BASE}_cr.log"
 LOG_CC="${LOG_BASE}_cc.log"
+LOG_OPENBLAS="${LOG_BASE}_openblas.log"
 
 echo "[msckf] root: $ROOT_DIR"
 
@@ -75,6 +78,7 @@ run_comparison() {
   local bin_rc="$3"
   local bin_cr="$4"
   local bin_cc="$5"
+  local bin_openblas="$6"
 
   if [[ -x "$bin_schur" ]]; then
     echo "[msckf] running schur: dense Schur normal equations + Cholesky..."
@@ -93,6 +97,13 @@ run_comparison() {
   echo "[msckf] running cc: col-major storage + col-order elimination..."
   "$bin_cc" "$DATASET_PATH" > "$LOG_CC" 2>&1
 
+  if [[ -x "$bin_openblas" ]]; then
+    echo "[msckf] running openblas: col-major storage + OpenBLAS dgels..."
+    echo "[msckf] openblas threads: OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 GOTO_NUM_THREADS=1"
+    OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 GOTO_NUM_THREADS=1 \
+      "$bin_openblas" "$DATASET_PATH" > "$LOG_OPENBLAS" 2>&1
+  fi
+
   if [[ -f "$LOG_SCHUR" ]]; then
     cp "$LOG_SCHUR" "$LOG_FILE"
   else
@@ -100,7 +111,7 @@ run_comparison() {
   fi
 
   echo
-  echo "[msckf] schur / layout comparison (seconds):"
+  echo "[msckf] schur / layout / openblas comparison (seconds):"
   printf "%-26s %12s %12s\n" "mode" "TIME(s)" "GlobalSolve(s)"
   printf "%-26s %12s %12s\n" "--------------------------" "------------" "------------"
   if [[ -f "$LOG_SCHUR" ]]; then
@@ -110,6 +121,9 @@ run_comparison() {
   print_result "rc (row-major,col-order)" "$LOG_RC"
   print_result "cr (col-major,row-order)" "$LOG_CR"
   print_result "cc (col-major,col-order)" "$LOG_CC"
+  if [[ -f "$LOG_OPENBLAS" ]]; then
+    print_result "openblas (col-major,dgels)" "$LOG_OPENBLAS"
+  fi
 
   echo
   echo "[msckf] logs:"
@@ -120,13 +134,18 @@ run_comparison() {
   echo "  rc -> $LOG_RC"
   echo "  cr -> $LOG_CR"
   echo "  cc -> $LOG_CC"
+  if [[ -f "$LOG_OPENBLAS" ]]; then
+    echo "  openblas -> $LOG_OPENBLAS"
+  else
+    echo "  openblas -> not built (OpenBLAS not found by CMake)"
+  fi
   echo "  default -> $LOG_FILE (schur if available, else rr)"
 }
 
 if [[ "$MODE" == "workspace" ]]; then
-  run_comparison "$WORKSPACE_BINARY_SCHUR" "$WORKSPACE_BINARY_RR" "$WORKSPACE_BINARY_RC" "$WORKSPACE_BINARY_CR" "$WORKSPACE_BINARY_CC"
+  run_comparison "$WORKSPACE_BINARY_RR" "$WORKSPACE_BINARY_RC" "$WORKSPACE_BINARY_CR" "$WORKSPACE_BINARY_CC" "$WORKSPACE_BINARY_OPENBLAS"
 elif [[ "$MODE" == "image_multi" ]]; then
-  run_comparison "$IMAGE_BINARY_SCHUR" "$IMAGE_BINARY_RR" "$IMAGE_BINARY_RC" "$IMAGE_BINARY_CR" "$IMAGE_BINARY_CC"
+  run_comparison "$IMAGE_BINARY_RR" "$IMAGE_BINARY_RC" "$IMAGE_BINARY_CR" "$IMAGE_BINARY_CC" "$IMAGE_BINARY_OPENBLAS"
 else
   CMD="$IMAGE_BINARY $DATASET_PATH"
   echo "[msckf] command: $CMD"

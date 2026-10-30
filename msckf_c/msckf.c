@@ -326,20 +326,24 @@ int main(int argc, char **argv) {
   const char *global_solver_mode = "schur_cholesky";
 #elif defined(MSCKF_STORAGE_COL_MAJOR)
   const char *global_storage_mode = "col-major";
-#if defined(MSCKF_USE_COL_QR)
-  const char *global_elim_mode = "col-order";
-#else
-  const char *global_elim_mode = "row-order";
-#endif
-  const char *global_solver_mode = "givens";
 #else
   const char *global_storage_mode = "row-major";
+#endif
+#if !defined(MSCKF_USE_SCHUR)
 #if defined(MSCKF_USE_COL_QR)
   const char *global_elim_mode = "col-order";
 #else
   const char *global_elim_mode = "row-order";
 #endif
+#if defined(MSCKF_USE_LAPACK)
+#if defined(MSCKF_USE_OPENBLAS)
+  const char *global_solver_mode = "openblas_dgels";
+#else
+  const char *global_solver_mode = "lapack_dgels";
+#endif
+#else
   const char *global_solver_mode = "givens";
+#endif
 #endif
 
   // Build point -> observation index lists
@@ -393,15 +397,9 @@ int main(int argc, char **argv) {
     residual_eval_calls++;
     printf("iter %d loss %.6f\n", iter, loss_prev);
 
-    double *delta_cam = NULL;
-#if !defined(MSCKF_USE_SCHUR)
-    double *delta_pts = calloc((size_t)np * 3, sizeof(double));
-#endif
-    double *Hred = NULL;
-    double *bred = NULL;
-    valid_points = 0;
-
 #if defined(MSCKF_USE_SCHUR)
+    double *delta_cam = NULL;
+    valid_points = 0;
     memset(H, 0, sizeof(double) * (size_t)state_dim * (size_t)state_dim);
     memset(dx, 0, sizeof(double) * (size_t)state_dim);
     memset(delta_pts, 0, sizeof(double) * (size_t)np * 3);
@@ -592,16 +590,85 @@ int main(int argc, char **argv) {
     point_backsolve_time += wall_seconds() - t_backsolve0;
     point_backsolve_calls += valid_points;
 
+    // Backtracking line search on step length
+    double alpha = 1.0;
+    double loss_new = loss_prev;
+    int accepted = 0;
+    while (alpha > 1e-4) {
+      memcpy(R_tmp, R_all, sizeof(double) * 9 * nc);
+      memcpy(pts_tmp, pts, sizeof(Point) * np);
+      for (int i = 0; i < nc; ++i) {
+        cams_tmp[i] = cams[i];
+        t_tmp[3 * i + 0] = cams[i].t[0];
+        t_tmp[3 * i + 1] = cams[i].t[1];
+        t_tmp[3 * i + 2] = cams[i].t[2];
+      }
+      // Apply scaled update to temp
+      for (int i = 0; i < nc; ++i) {
+        const double *d = &delta_cam[i * 9];
+        double dtheta[3] = {alpha * d[0], alpha * d[1], alpha * d[2]};
+        double dt[3] = {alpha * d[3], alpha * d[4], alpha * d[5]};
+        double dR[9];
+        mat3_expmap(dtheta, dR);
+        double newR[9];
+        mat3_mul(dR, &R_tmp[i * 9], newR);
+        memcpy(&R_tmp[i * 9], newR, sizeof(double) * 9);
+        t_tmp[3 * i + 0] += dt[0];
+        t_tmp[3 * i + 1] += dt[1];
+        t_tmp[3 * i + 2] += dt[2];
+        cams_tmp[i].t[0] = t_tmp[3 * i + 0];
+        cams_tmp[i].t[1] = t_tmp[3 * i + 1];
+        cams_tmp[i].t[2] = t_tmp[3 * i + 2];
+        cams_tmp[i].f += alpha * d[6];
+        cams_tmp[i].k1 += alpha * d[7];
+        cams_tmp[i].k2 += alpha * d[8];
+      }
+      for (int i = 0; i < np; ++i) {
+        pts_tmp[i].p[0] += alpha * delta_pts[3 * i + 0];
+        pts_tmp[i].p[1] += alpha * delta_pts[3 * i + 1];
+        pts_tmp[i].p[2] += alpha * delta_pts[3 * i + 2];
+      }
+      double t_res1 = wall_seconds();
+      loss_new = compute_loss(cams_tmp, R_tmp, pts_tmp, obs, no, huber_delta);
+      residual_eval_time += wall_seconds() - t_res1;
+      residual_eval_calls++;
+      if (loss_new < loss_prev) {
+        accepted = 1;
+        break;
+      }
+      alpha *= 0.5;
+    }
+    if (accepted) {
+      memcpy(R_all, R_tmp, sizeof(double) * 9 * nc);
+      for (int i = 0; i < nc; ++i) {
+        cams[i].t[0] = t_tmp[3 * i + 0];
+        cams[i].t[1] = t_tmp[3 * i + 1];
+        cams[i].t[2] = t_tmp[3 * i + 2];
+        const double *d = &delta_cam[i * 9];
+        cams[i].f += alpha * d[6];
+        cams[i].k1 += alpha * d[7];
+        cams[i].k2 += alpha * d[8];
+      }
+      memcpy(pts, pts_tmp, sizeof(Point) * np);
+      printf("  step alpha=%.4f loss=%.6f\n", alpha, loss_new);
+      if (fabs(loss_prev - loss_new) < 1e-6 * (1.0 + fabs(loss_prev))) {
+        max_iters = iter + 1;
+        accepted = 2;
+      }
+    } else {
+      printf("  step rejected (no decrease)\n");
+    }
+    if (accepted == 2) break;
 #else
-    // Legacy nullspace / tall Hred + QR path (kept for layout/order benchmarks).
+    // Count rows after eliminating points: sum(max(0, 2*obs-3))
     int total_rows = 0;
     for (int pid = 0; pid < np; ++pid) {
       int c = point_obs[pid].count;
       if (c >= 2) total_rows += (2 * c - 3);
     }
-    int rows_with_reg = total_rows + state_dim;
-    Hred = calloc((size_t)rows_with_reg * state_dim, sizeof(double));
-    bred = calloc((size_t)rows_with_reg, sizeof(double));
+    int rows_with_reg = total_rows + state_dim; // per-state regularization (includes anchor)
+    double *Hred = calloc((size_t)rows_with_reg * state_dim, sizeof(double));
+    double *bred = calloc((size_t)rows_with_reg, sizeof(double));
     int row_cursor = 0;
     valid_points = 0;
 
@@ -693,7 +760,6 @@ int main(int argc, char **argv) {
       fprintf(stderr, "not enough constraints\n");
       free(Hred);
       free(bred);
-      free(delta_pts);
       break;
     }
 
@@ -709,11 +775,10 @@ int main(int argc, char **argv) {
       fprintf(stderr, "qr solve failed at iter %d\n", iter);
       free(Hred);
       free(bred);
-      free(delta_pts);
       break;
     }
-    delta_cam = bred;
-
+    // Recover point increments so the next linearization is consistent with the Schur step.
+    double *delta_pts = calloc((size_t)np * 3, sizeof(double));
     for (int pid = 0; pid < np; ++pid) {
       int cnt = point_obs[pid].count;
       if (cnt < 2) continue;
@@ -741,8 +806,8 @@ int main(int argc, char **argv) {
         double hx0 = 0.0;
         double hx1 = 0.0;
         for (int col = 0; col < 9; ++col) {
-          hx0 += sw * Jc[0 * 9 + col] * delta_cam[off + col];
-          hx1 += sw * Jc[1 * 9 + col] * delta_cam[off + col];
+          hx0 += sw * Jc[0 * 9 + col] * bred[off + col];
+          hx1 += sw * Jc[1 * 9 + col] * bred[off + col];
         }
         rhs[2 * j + 0] = -sw * du - hx0;
         rhs[2 * j + 1] = -sw * dv - hx1;
@@ -762,15 +827,12 @@ int main(int argc, char **argv) {
       free(Hf);
       free(rhs);
     }
-#endif
 
     // Backtracking line search on step length
-#if !defined(MSCKF_USE_SCHUR)
     double *R_tmp = malloc(sizeof(double) * 9 * nc);
     double *t_tmp = malloc(sizeof(double) * 3 * nc);
     Camera *cams_tmp = malloc(sizeof(Camera) * nc);
     Point *pts_tmp = malloc(sizeof(Point) * np);
-#endif
     double alpha = 1.0;
     double loss_new = loss_prev;
     int accepted = 0;
@@ -783,8 +845,9 @@ int main(int argc, char **argv) {
         t_tmp[3 * i + 1] = cams[i].t[1];
         t_tmp[3 * i + 2] = cams[i].t[2];
       }
+      // Apply scaled update to temp
       for (int i = 0; i < nc; ++i) {
-        const double *d = &delta_cam[i * 9];
+        const double *d = &bred[i * 9];
         double dtheta[3] = {alpha * d[0], alpha * d[1], alpha * d[2]};
         double dt[3] = {alpha * d[3], alpha * d[4], alpha * d[5]};
         double dR[9];
@@ -823,26 +886,16 @@ int main(int argc, char **argv) {
         cams[i].t[0] = t_tmp[3 * i + 0];
         cams[i].t[1] = t_tmp[3 * i + 1];
         cams[i].t[2] = t_tmp[3 * i + 2];
-        const double *d = &delta_cam[i * 9];
+        const double *d = &bred[i * 9];
         cams[i].f += alpha * d[6];
         cams[i].k1 += alpha * d[7];
         cams[i].k2 += alpha * d[8];
       }
       memcpy(pts, pts_tmp, sizeof(Point) * np);
       printf("  step alpha=%.4f loss=%.6f\n", alpha, loss_new);
-#if defined(MSCKF_USE_SCHUR)
-      if (fabs(loss_prev - loss_new) < 1e-6 * (1.0 + fabs(loss_prev))) {
-        max_iters = iter + 1;
-        accepted = 2;  // mark converged
-      }
-#endif
     } else {
       printf("  step rejected (no decrease)\n");
     }
-#if defined(MSCKF_USE_SCHUR)
-    if (accepted == 2) break;
-#endif
-#if !defined(MSCKF_USE_SCHUR)
     free(R_tmp);
     free(t_tmp);
     free(cams_tmp);
